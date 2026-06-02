@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect } from 'react';
-import { RowndContext, RowndProviderProps } from './RowndContext';
+import {
+  HubListenerProps,
+  RowndContext,
+  RowndProviderProps,
+} from './RowndContext';
 import InternalProviderHubScriptInjector from './HubScriptInjector/InternalProviderHubScriptInjector';
 import useHub from '../hooks/useHub';
 import { TRowndContext, UserDataContext } from './types';
@@ -40,6 +44,7 @@ export const ReactRowndProvider: React.FC<RowndProviderProps> = ({
   const { user, is_authenticated, is_initializing } = hubState;
   useSuperTokensMigration({
     accessToken: hubState.access_token,
+    authLevel: hubState.auth_level,
     events: hubState.events,
     supertokens: props.supertokens,
   });
@@ -55,7 +60,7 @@ export const ReactRowndProvider: React.FC<RowndProviderProps> = ({
   }, [is_authenticated, is_initializing, user.data.user_id]);
 
   const stateListener = useCallback(
-    ({ state, api }) => {
+    ({ state, api }: HubListenerProps) => {
       hubListenerCb({ state, api, callback: setHubState });
     },
     [hubListenerCb]

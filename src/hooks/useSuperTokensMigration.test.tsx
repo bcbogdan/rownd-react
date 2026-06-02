@@ -24,9 +24,16 @@ describe('useSuperTokensMigration', () => {
     removeEventListener,
   } as unknown as TRowndContext['events'];
 
-  function TestComponent() {
+  function TestComponent({
+    accessToken = 'rownd-access-token',
+    authLevel,
+  }: {
+    accessToken?: string | null;
+    authLevel?: TRowndContext['auth_level'];
+  }) {
     useSuperTokensMigration({
-      accessToken: 'rownd-access-token',
+      accessToken,
+      authLevel,
       events,
       supertokens: {
         appInfo: {
@@ -74,6 +81,74 @@ describe('useSuperTokensMigration', () => {
         apiBasePath: '/auth',
       }
     );
+  });
+
+  it('waits for the access token before syncing new Rownd users', async () => {
+    const { rerender } = render(<TestComponent accessToken={null} />);
+
+    await waitFor(() => {
+      expect(addEventListener).toHaveBeenCalledWith(
+        'sign_in_completed',
+        expect.any(Function)
+      );
+    });
+
+    await act(async () => {
+      getSignInCompletedHandler()(new CustomEvent('sign_in_completed', {
+        detail: { user_type: 'new_user' },
+      }));
+    });
+
+    expect(syncUserToSuperTokens).not.toHaveBeenCalled();
+
+    rerender(<TestComponent accessToken="rownd-access-token" />);
+
+    await waitFor(() => {
+      expect(syncUserToSuperTokens).toHaveBeenCalledWith(
+        'rownd-access-token',
+        {
+          appName: 'test-app',
+          apiDomain: 'https://api.example.com',
+          apiBasePath: '/auth',
+        }
+      );
+    });
+  });
+
+  it('syncs converted instant users after receiving a non-instant token', async () => {
+    const { rerender } = render(
+      <TestComponent accessToken="instant-token" authLevel="instant" />
+    );
+
+    await waitFor(() => {
+      expect(addEventListener).toHaveBeenCalledWith(
+        'sign_in_completed',
+        expect.any(Function)
+      );
+    });
+
+    await act(async () => {
+      getSignInCompletedHandler()(new CustomEvent('sign_in_completed', {
+        detail: { user_type: 'existing_user' },
+      }));
+    });
+
+    expect(syncUserToSuperTokens).not.toHaveBeenCalled();
+
+    rerender(
+      <TestComponent accessToken="verified-token" authLevel="verified" />
+    );
+
+    await waitFor(() => {
+      expect(syncUserToSuperTokens).toHaveBeenCalledWith(
+        'verified-token',
+        {
+          appName: 'test-app',
+          apiDomain: 'https://api.example.com',
+          apiBasePath: '/auth',
+        }
+      );
+    });
   });
 
   it('ignores non-CustomEvent sign-in events', async () => {

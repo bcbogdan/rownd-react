@@ -8,57 +8,85 @@ import {
 
 type UseSuperTokensMigrationProps = {
   accessToken: string | null;
+  authLevel: TRowndContext['auth_level'];
   events: TRowndContext['events'];
   supertokens?: RowndProviderProps['supertokens'];
 };
 
-function isNewUserSignInCompletedEvent(event: Event): boolean {
+function getSignInCompletedUserType(event: Event): unknown {
   if (typeof CustomEvent === 'undefined' || !(event instanceof CustomEvent)) {
-    return false;
+    return undefined;
   }
 
   const detail = event.detail;
   if (!detail || typeof detail !== 'object') {
-    return false;
+    return undefined;
   }
 
-  return (detail as { user_type?: unknown }).user_type === 'new_user';
+  return (detail as { user_type?: unknown }).user_type;
+}
+
+function shouldMigrateSignIn(
+  userType: unknown,
+  authLevel: TRowndContext['auth_level']
+): boolean {
+  return (
+    userType === 'new_user' ||
+    (userType === 'existing_user' && authLevel === 'instant')
+  );
 }
 
 export function useSuperTokensMigration({
   accessToken,
+  authLevel,
   events,
   supertokens,
 }: UseSuperTokensMigrationProps): void {
   const appInfo = supertokens?.appInfo;
   const accessTokenRef = useRef<string | null>(accessToken);
-  const supertokensAppInfoRef = useRef(
-    normalizeSuperTokensAppInfo(appInfo)
-  );
+  const authLevelRef = useRef<TRowndContext['auth_level']>(authLevel);
+  const pendingMigrationRef = useRef(false);
+  const supertokensAppInfoRef = useRef(normalizeSuperTokensAppInfo(appInfo));
+
+  const flushPendingMigration = () => {
+    const currentAccessToken = accessTokenRef.current;
+    const currentAuthLevel = authLevelRef.current;
+    const appInfo = supertokensAppInfoRef.current;
+
+    if (
+      !pendingMigrationRef.current ||
+      !currentAccessToken ||
+      !appInfo ||
+      currentAuthLevel === 'instant'
+    ) {
+      return;
+    }
+
+    pendingMigrationRef.current = false;
+    syncUserToSuperTokens(currentAccessToken, appInfo);
+  };
 
   useEffect(() => {
     accessTokenRef.current = accessToken;
-  }, [accessToken]);
+    authLevelRef.current = authLevel;
+    flushPendingMigration();
+  }, [accessToken, authLevel]);
 
   useEffect(() => {
-    supertokensAppInfoRef.current = normalizeSuperTokensAppInfo(
-      appInfo
-    );
+    supertokensAppInfoRef.current = normalizeSuperTokensAppInfo(appInfo);
+    flushPendingMigration();
   }, [appInfo?.appName, appInfo?.apiDomain, appInfo?.apiBasePath]);
 
   useEffect(() => {
     const handleSignInCompleted = (event: Event) => {
-      if (!isNewUserSignInCompletedEvent(event)) {
+      const userType = getSignInCompletedUserType(event);
+
+      if (!shouldMigrateSignIn(userType, authLevelRef.current)) {
         return;
       }
 
-      const currentAccessToken = accessTokenRef.current;
-      const appInfo = supertokensAppInfoRef.current;
-      if (!currentAccessToken || !appInfo) {
-        return;
-      }
-
-      void syncUserToSuperTokens(currentAccessToken, appInfo);
+      pendingMigrationRef.current = true;
+      flushPendingMigration();
     };
 
     events.addEventListener('sign_in_completed', handleSignInCompleted);
