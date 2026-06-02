@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { RowndProviderProps } from '../context/RowndContext';
 import { TRowndContext } from '../context/types';
 import {
@@ -28,11 +28,11 @@ function getSignInCompletedUserType(event: Event): unknown {
 
 function shouldMigrateSignIn(
   userType: unknown,
-  authLevel: TRowndContext['auth_level']
+  hasSeenInstantSession: boolean
 ): boolean {
   return (
     userType === 'new_user' ||
-    (userType === 'existing_user' && authLevel === 'instant')
+    (userType === 'existing_user' && hasSeenInstantSession)
   );
 }
 
@@ -45,10 +45,11 @@ export function useSuperTokensMigration({
   const appInfo = supertokens?.appInfo;
   const accessTokenRef = useRef<string | null>(accessToken);
   const authLevelRef = useRef<TRowndContext['auth_level']>(authLevel);
+  const hasSeenInstantSessionRef = useRef(false);
   const pendingMigrationRef = useRef(false);
   const supertokensAppInfoRef = useRef(normalizeSuperTokensAppInfo(appInfo));
 
-  const flushPendingMigration = () => {
+  const flushPendingMigration = useCallback(() => {
     const currentAccessToken = accessTokenRef.current;
     const currentAuthLevel = authLevelRef.current;
     const appInfo = supertokensAppInfoRef.current;
@@ -63,29 +64,50 @@ export function useSuperTokensMigration({
     }
 
     pendingMigrationRef.current = false;
-    syncUserToSuperTokens(currentAccessToken, appInfo);
-  };
+    void syncUserToSuperTokens(currentAccessToken, appInfo);
+  }, []);
 
   useEffect(() => {
+    const hadAccessToken = !!accessTokenRef.current;
+
     accessTokenRef.current = accessToken;
     authLevelRef.current = authLevel;
+
+    if (hadAccessToken && !accessToken) {
+      hasSeenInstantSessionRef.current = false;
+      pendingMigrationRef.current = false;
+    }
+
+    if (accessToken && authLevel === 'instant') {
+      hasSeenInstantSessionRef.current = true;
+    }
+
     flushPendingMigration();
-  }, [accessToken, authLevel]);
+  }, [accessToken, authLevel, flushPendingMigration]);
 
   useEffect(() => {
     supertokensAppInfoRef.current = normalizeSuperTokensAppInfo(appInfo);
     flushPendingMigration();
-  }, [appInfo?.appName, appInfo?.apiDomain, appInfo?.apiBasePath]);
+  }, [
+    appInfo?.appName,
+    appInfo?.apiDomain,
+    appInfo?.apiBasePath,
+    flushPendingMigration,
+  ]);
 
   useEffect(() => {
     const handleSignInCompleted = (event: Event) => {
       const userType = getSignInCompletedUserType(event);
 
-      if (!shouldMigrateSignIn(userType, authLevelRef.current)) {
+      if (!shouldMigrateSignIn(userType, hasSeenInstantSessionRef.current)) {
         return;
       }
 
       pendingMigrationRef.current = true;
+      if (userType === 'existing_user') {
+        hasSeenInstantSessionRef.current = false;
+      }
+
       flushPendingMigration();
     };
 
@@ -94,5 +116,5 @@ export function useSuperTokensMigration({
     return () => {
       events.removeEventListener('sign_in_completed', handleSignInCompleted);
     };
-  }, [events]);
+  }, [events, flushPendingMigration]);
 }

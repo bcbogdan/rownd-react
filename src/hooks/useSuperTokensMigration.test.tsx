@@ -151,6 +151,68 @@ describe('useSuperTokensMigration', () => {
     });
   });
 
+  it('syncs converted instant users when verified state arrives before the sign-in event', async () => {
+    const { rerender } = render(
+      <TestComponent accessToken="instant-token" authLevel="instant" />
+    );
+
+    await waitFor(() => {
+      expect(addEventListener).toHaveBeenCalledWith(
+        'sign_in_completed',
+        expect.any(Function)
+      );
+    });
+
+    rerender(
+      <TestComponent accessToken="verified-token" authLevel="verified" />
+    );
+
+    expect(syncUserToSuperTokens).not.toHaveBeenCalled();
+
+    await act(async () => {
+      getSignInCompletedHandler()(new CustomEvent('sign_in_completed', {
+        detail: { user_type: 'existing_user' },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(syncUserToSuperTokens).toHaveBeenCalledWith(
+        'verified-token',
+        {
+          appName: 'test-app',
+          apiDomain: 'https://api.example.com',
+          apiBasePath: '/auth',
+        }
+      );
+    });
+  });
+
+  it('does not carry instant conversion state across sign-out', async () => {
+    const { rerender } = render(
+      <TestComponent accessToken="instant-token" authLevel="instant" />
+    );
+
+    await waitFor(() => {
+      expect(addEventListener).toHaveBeenCalledWith(
+        'sign_in_completed',
+        expect.any(Function)
+      );
+    });
+
+    rerender(<TestComponent accessToken={null} authLevel={undefined} />);
+    rerender(
+      <TestComponent accessToken="verified-token" authLevel="verified" />
+    );
+
+    await act(async () => {
+      getSignInCompletedHandler()(new CustomEvent('sign_in_completed', {
+        detail: { user_type: 'existing_user' },
+      }));
+    });
+
+    expect(syncUserToSuperTokens).not.toHaveBeenCalled();
+  });
+
   it('ignores non-CustomEvent sign-in events', async () => {
     render(<TestComponent />);
 
